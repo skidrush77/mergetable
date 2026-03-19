@@ -512,157 +512,183 @@ function drawBg() {
   });
 }
 
-function drawWalls() {
-  const FACE_H = 24;   // table front-face height (3D edge)
-  const LEG_W  = 22;   // leg width
-  const LEG_H  = 52;   // leg height
-  const legTop = DANGER_Y + FACE_H;
+function drawTable() {
+  /* ══════════════════════════════════════════════════════
+     3D PERSPECTIVE TABLE
+     - Surface: trapezoid (top narrow, bottom wide)
+     - Front face: 40px dark-brown thickness
+     - Left side face: partially visible (darker)
+     - 4 legs: front 2 thick/dark, back 2 thin/light
+  ══════════════════════════════════════════════════════ */
 
-  /* ════ LEFT / RIGHT WOODEN BORDER WALLS ════ */
-  const lwg = ctx.createLinearGradient(0, 0, WALL_T, 0);
-  lwg.addColorStop(0,   '#3a1a05');
-  lwg.addColorStop(0.55,'#7a4415');
-  lwg.addColorStop(1,   '#9e5c20');
-  ctx.fillStyle = lwg;
-  ctx.fillRect(0, CEIL_Y, WALL_T, DANGER_Y - CEIL_Y);
+  const TAPER   = 48;   // top edge narrowed by this on each side
+  const FACE_H  = 40;   // front-face (table thickness) height
+  const FL_W    = 22, FL_H = 34;   // front leg: wide & tall (prominent)
+  const BL_W    = 11, BL_H = 20;   // back  leg: narrow & short (receding)
 
-  const rwg = ctx.createLinearGradient(PLAY_R, 0, CW, 0);
-  rwg.addColorStop(0,   '#9e5c20');
-  rwg.addColorStop(0.45,'#7a4415');
-  rwg.addColorStop(1,   '#3a1a05');
-  ctx.fillStyle = rwg;
-  ctx.fillRect(PLAY_R, CEIL_Y, WALL_T, DANGER_Y - CEIL_Y);
+  // Trapezoid corner X coords
+  const TL_X = PLAY_L + TAPER;   // top-left  x = 70
+  const TR_X = PLAY_R - TAPER;   // top-right x = 390
+  const faceBot = DANGER_Y + FACE_H;   // bottom of front face = 660
 
-  /* ════ TOP BORDER — back edge of table, semi-transparent to show sky ════ */
-  const tbg = ctx.createLinearGradient(0, 0, 0, CEIL_Y);
-  tbg.addColorStop(0,   'rgba(30,12,3,0.15)');
-  tbg.addColorStop(0.5, 'rgba(70,35,10,0.6)');
-  tbg.addColorStop(1,   '#8a5018');
-  ctx.fillStyle = tbg;
-  ctx.fillRect(0, 0, CW, CEIL_Y);
-
-  /* ════ TABLE SURFACE — trapezoid perspective effect ════
-     Drawn as a rectangle but with converging perspective lines */
-  const surf = ctx.createLinearGradient(0, CEIL_Y, 0, DANGER_Y);
-  surf.addColorStop(0,    '#c0a870');   // darker / farther
-  surf.addColorStop(0.18, '#d4bc84');
-  surf.addColorStop(0.45, '#e8cf98');
-  surf.addColorStop(0.75, '#f2dda8');
-  surf.addColorStop(1,    '#faecc0');   // brighter / closer
-  ctx.fillStyle = surf;
-  ctx.fillRect(PLAY_L, CEIL_Y, PLAY_W, DANGER_Y - CEIL_Y);
-
-  /* Perspective grid lines on the surface */
-  ctx.save();
-  ctx.beginPath(); ctx.rect(PLAY_L, CEIL_Y, PLAY_W, DANGER_Y - CEIL_Y); ctx.clip();
-
-  // Horizontal lines — converge (get closer together) towards the top
-  for (let i = 0; i <= 11; i++) {
-    const t   = i / 11;
-    const y   = CEIL_Y + t * (DANGER_Y - CEIL_Y);
-    const ins = (1 - t) * 24;     // lines inset more at the top
-    ctx.strokeStyle = `rgba(140,100,40,${0.055 + t * 0.045})`;
-    ctx.lineWidth = 0.85;
+  // ── Helper: trapezoid clip path ──────────────────────
+  function trapPath() {
     ctx.beginPath();
-    ctx.moveTo(PLAY_L + ins, y);
-    ctx.lineTo(PLAY_R - ins, y);
-    ctx.stroke();
+    ctx.moveTo(TL_X,   CEIL_Y);
+    ctx.lineTo(TR_X,   CEIL_Y);
+    ctx.lineTo(PLAY_R, DANGER_Y);
+    ctx.lineTo(PLAY_L, DANGER_Y);
+    ctx.closePath();
   }
-  // Vertical lines — converge toward a vanishing point at top-centre
-  for (let i = 0; i <= 7; i++) {
-    const t    = i / 7;
-    const xTop = PLAY_L + 28 + t * (PLAY_W - 56);  // compressed range at top
-    const xBot = PLAY_L + t * PLAY_W;
-    ctx.strokeStyle = 'rgba(140,100,40,0.055)';
-    ctx.lineWidth = 0.85;
-    ctx.beginPath(); ctx.moveTo(xTop, CEIL_Y); ctx.lineTo(xBot, DANGER_Y); ctx.stroke();
+
+  /* ════ 1. BACK LEGS — drawn first, table surface covers their tops ════ */
+  [[TL_X + 6, BL_W, BL_H], [TR_X - 6 - BL_W, BL_W, BL_H]].forEach(([lx, w, h]) => {
+    const g = ctx.createLinearGradient(lx, 0, lx+w, 0);
+    g.addColorStop(0, '#b89040'); g.addColorStop(0.6, '#d4ad60'); g.addColorStop(1, '#a07830');
+    ctx.fillStyle = g;
+    ctx.fillRect(lx, CEIL_Y, w, h);
+    // Subtle right-edge shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(lx+w-2, CEIL_Y, 2, h);
+  });
+
+  /* ════ 2. TABLE SURFACE — trapezoid, light beige top → darker beige bottom ════ */
+  const surf = ctx.createLinearGradient(0, CEIL_Y, 0, DANGER_Y);
+  surf.addColorStop(0,    '#e8d5a3');   // ← user-specified top colour
+  surf.addColorStop(0.35, '#dcc88e');
+  surf.addColorStop(0.75, '#d0b87c');
+  surf.addColorStop(1,    '#c9b47a');   // ← user-specified bottom colour
+  ctx.fillStyle = surf;
+  trapPath();
+  ctx.fill();
+
+  /* ════ 3. WOOD GRAIN — 4 horizontal lines converging with trapezoid ════ */
+  ctx.save();
+  trapPath(); ctx.clip();
+  for (let i = 1; i <= 4; i++) {
+    const t  = i / 5;                                   // 0.2, 0.4, 0.6, 0.8
+    const y  = CEIL_Y + t * (DANGER_Y - CEIL_Y);
+    const xL = TL_X  + (PLAY_L - TL_X)  * t;           // interpolate TL_X → PLAY_L
+    const xR = TR_X  + (PLAY_R - TR_X)  * t;           // interpolate TR_X → PLAY_R
+    ctx.strokeStyle = `rgba(110, 70, 20, ${0.11 + i * 0.03})`;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(xL, y); ctx.lineTo(xR, y); ctx.stroke();
   }
   ctx.restore();
 
-  /* ── Inner edge bevels (bright rim of the table top) ── */
-  ctx.strokeStyle = 'rgba(215,170,80,0.70)'; ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.moveTo(PLAY_L, CEIL_Y);   ctx.lineTo(PLAY_L, DANGER_Y); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(PLAY_R, CEIL_Y);   ctx.lineTo(PLAY_R, DANGER_Y); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(PLAY_L, CEIL_Y);   ctx.lineTo(PLAY_R, CEIL_Y);   ctx.stroke();
-
-  /* ── Inner shadows along edges (depth) ── */
-  const lsh = ctx.createLinearGradient(PLAY_L, 0, PLAY_L+20, 0);
-  lsh.addColorStop(0,'rgba(0,0,0,0.22)'); lsh.addColorStop(1,'transparent');
-  ctx.fillStyle = lsh; ctx.fillRect(PLAY_L, CEIL_Y, 20, DANGER_Y - CEIL_Y);
-
-  const rsh = ctx.createLinearGradient(PLAY_R-20, 0, PLAY_R, 0);
-  rsh.addColorStop(0,'transparent'); rsh.addColorStop(1,'rgba(0,0,0,0.22)');
-  ctx.fillStyle = rsh; ctx.fillRect(PLAY_R-20, CEIL_Y, 20, DANGER_Y - CEIL_Y);
-
-  const tsh = ctx.createLinearGradient(0, CEIL_Y, 0, CEIL_Y+24);
+  /* ── Inner depth shadows (darken near all edges) ── */
+  ctx.save(); trapPath(); ctx.clip();
+  // Left edge shadow
+  const lsh = ctx.createLinearGradient(PLAY_L, 0, PLAY_L+22, 0);
+  lsh.addColorStop(0,'rgba(0,0,0,0.20)'); lsh.addColorStop(1,'transparent');
+  ctx.fillStyle = lsh; ctx.fillRect(PLAY_L, CEIL_Y, 22, DANGER_Y-CEIL_Y);
+  // Right edge shadow
+  const rsh = ctx.createLinearGradient(PLAY_R-22, 0, PLAY_R, 0);
+  rsh.addColorStop(0,'transparent'); rsh.addColorStop(1,'rgba(0,0,0,0.20)');
+  ctx.fillStyle = rsh; ctx.fillRect(PLAY_R-22, CEIL_Y, 22, DANGER_Y-CEIL_Y);
+  // Top edge shadow (receding depth)
+  const tsh = ctx.createLinearGradient(0, CEIL_Y, 0, CEIL_Y+30);
   tsh.addColorStop(0,'rgba(0,0,0,0.28)'); tsh.addColorStop(1,'transparent');
-  ctx.fillStyle = tsh; ctx.fillRect(PLAY_L, CEIL_Y, PLAY_W, 24);
+  ctx.fillStyle = tsh; ctx.fillRect(PLAY_L, CEIL_Y, PLAY_W, 30);
+  ctx.restore();
 
-  /* ════ TABLE FRONT FACE — 3D visible edge below danger line ════ */
-  const ffg = ctx.createLinearGradient(0, DANGER_Y, 0, DANGER_Y + FACE_H);
-  ffg.addColorStop(0,    '#c07820');
-  ffg.addColorStop(0.45, '#9a5c14');
-  ffg.addColorStop(1,    '#4e2c06');
+  /* ════ 4. SURFACE BORDER — 4px #a0784a around the trapezoid ════ */
+  ctx.strokeStyle = '#a0784a';
+  ctx.lineWidth   = 4;
+  ctx.lineJoin    = 'round';
+  trapPath(); ctx.stroke();
+
+  /* ════ 5. LEFT SIDE FACE — partially visible, very dark ════
+     Shows ~120px of the left edge with face thickness, giving depth. */
+  const lsTopY = DANGER_Y - 120;
+  const lsT    = (lsTopY - CEIL_Y) / (DANGER_Y - CEIL_Y);
+  const lsX    = TL_X + (PLAY_L - TL_X) * lsT;   // left-edge x at lsTopY
+
+  const lfg = ctx.createLinearGradient(PLAY_L, 0, lsX+10, 0);
+  lfg.addColorStop(0, '#3e1e04');   // darkest at front-left
+  lfg.addColorStop(1, '#6a3e10');   // slightly lighter toward back
+  ctx.fillStyle = lfg;
+  ctx.beginPath();
+  ctx.moveTo(lsX,    lsTopY);
+  ctx.lineTo(PLAY_L, DANGER_Y);
+  ctx.lineTo(PLAY_L, faceBot);
+  ctx.lineTo(lsX,    lsTopY + FACE_H);
+  ctx.closePath();
+  ctx.fill();
+  // Left-face top-edge bevel
+  ctx.strokeStyle = 'rgba(160,110,40,0.40)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(lsX, lsTopY); ctx.lineTo(PLAY_L, DANGER_Y);
+  ctx.stroke();
+
+  /* ════ 6. FRONT FACE — 40px dark-brown strip below danger line ════ */
+  const ffg = ctx.createLinearGradient(0, DANGER_Y, 0, faceBot);
+  ffg.addColorStop(0,    '#8B6914');   // ← user-specified
+  ffg.addColorStop(0.45, '#7a5c10');
+  ffg.addColorStop(1,    '#4a2c06');
   ctx.fillStyle = ffg;
-  ctx.fillRect(PLAY_L - 2, DANGER_Y, PLAY_W + 4, FACE_H);
+  ctx.fillRect(PLAY_L, DANGER_Y, PLAY_W, FACE_H);
 
-  /* Top lip highlight */
-  const lip = ctx.createLinearGradient(0, DANGER_Y, 0, DANGER_Y + 4);
-  lip.addColorStop(0, 'rgba(255,215,100,0.6)');
-  lip.addColorStop(1, 'transparent');
-  ctx.fillStyle = lip; ctx.fillRect(PLAY_L - 2, DANGER_Y, PLAY_W + 4, 4);
+  // Top-lip highlight
+  const lip = ctx.createLinearGradient(0, DANGER_Y, 0, DANGER_Y+5);
+  lip.addColorStop(0, 'rgba(255,210,90,0.50)'); lip.addColorStop(1,'transparent');
+  ctx.fillStyle = lip; ctx.fillRect(PLAY_L, DANGER_Y, PLAY_W, 5);
 
-  /* Bottom shadow of front face */
-  ctx.fillStyle = 'rgba(0,0,0,0.38)';
-  ctx.fillRect(PLAY_L - 2, DANGER_Y + FACE_H - 2.5, PLAY_W + 4, 2.5);
+  // Bottom shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(PLAY_L, faceBot-3, PLAY_W, 3);
 
-  /* ════ TABLE LEGS ════ */
-  const legPositions = [PLAY_L + 10, PLAY_R - 10 - LEG_W];
-  legPositions.forEach(lx => {
-    /* Leg body */
-    const lg = ctx.createLinearGradient(lx, 0, lx + LEG_W, 0);
-    lg.addColorStop(0,    '#321604');
-    lg.addColorStop(0.35, '#7a4010');
-    lg.addColorStop(0.65, '#9c5818');
-    lg.addColorStop(1,    '#5e3008');
-    ctx.fillStyle = lg;
-    ctx.fillRect(lx, legTop, LEG_W, LEG_H);
+  // Front-face border  (top + left + right edges)
+  ctx.strokeStyle = '#a0784a'; ctx.lineWidth = 3; ctx.lineJoin = 'miter';
+  ctx.beginPath();
+  ctx.moveTo(PLAY_L, DANGER_Y); ctx.lineTo(PLAY_R, DANGER_Y);
+  ctx.lineTo(PLAY_R, faceBot);  ctx.lineTo(PLAY_L, faceBot);
+  ctx.closePath(); ctx.stroke();
 
-    /* Leg highlight strip */
-    ctx.fillStyle = 'rgba(255,185,80,0.18)';
-    ctx.fillRect(lx + 4, legTop + 3, 4, LEG_H - 6);
-
-    /* Foot base */
-    ctx.fillStyle = '#241004';
-    ctx.fillRect(lx - 4, legTop + LEG_H, LEG_W + 8, 9);
-
-    /* Foot ground shadow */
-    const fsh = ctx.createRadialGradient(lx + LEG_W/2, legTop + LEG_H + 9, 1,
-                                          lx + LEG_W/2, legTop + LEG_H + 9, 18);
-    fsh.addColorStop(0, 'rgba(0,0,0,0.35)');
-    fsh.addColorStop(1, 'transparent');
+  /* ════ 7. FRONT LEGS — 2, thick & dark (near viewer) ════ */
+  [PLAY_L + 12, PLAY_R - 12 - FL_W].forEach(lx => {
+    const g = ctx.createLinearGradient(lx, 0, lx+FL_W, 0);
+    g.addColorStop(0,    '#261002');
+    g.addColorStop(0.30, '#5e300c');
+    g.addColorStop(0.62, '#7e4814');
+    g.addColorStop(1,    '#4a280a');
+    ctx.fillStyle = g;
+    ctx.fillRect(lx, faceBot, FL_W, FL_H);
+    // Highlight strip
+    ctx.fillStyle = 'rgba(255,175,70,0.18)';
+    ctx.fillRect(lx+4, faceBot+3, 5, FL_H-6);
+    // Foot
+    ctx.fillStyle = '#1c0e02';
+    ctx.fillRect(lx-4, faceBot+FL_H, FL_W+8, 8);
+    // Ground shadow
+    const fsh = ctx.createRadialGradient(lx+FL_W/2, faceBot+FL_H+8, 1,
+                                          lx+FL_W/2, faceBot+FL_H+8, 20);
+    fsh.addColorStop(0,'rgba(0,0,0,0.38)'); fsh.addColorStop(1,'transparent');
     ctx.fillStyle = fsh;
     ctx.beginPath();
-    ctx.ellipse(lx + LEG_W/2, legTop + LEG_H + 12, 18, 5, 0, 0, Math.PI*2);
+    ctx.ellipse(lx+FL_W/2, faceBot+FL_H+12, 20, 6, 0, 0, Math.PI*2);
     ctx.fill();
   });
 
-  /* ════ TITLE on top border ════ */
-  ctx.globalAlpha = 0.50;
+  /* ════ TITLE on ceiling strip ════ */
+  ctx.globalAlpha = 0.48;
   ctx.font = 'bold 11px sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffe0a0';
   ctx.fillText('🍹  DRINK MERGE  🍹', CW/2, CEIL_Y * 0.52);
   ctx.globalAlpha = 1;
 }
+function drawWalls() { drawTable(); }
 
 function drawDangerLine() {
+  // Danger line at y=DANGER_Y spans the full bottom width of the trapezoid
   ctx.save();
-  ctx.strokeStyle='rgba(255,60,40,.6)'; ctx.lineWidth=2; ctx.setLineDash([10,6]);
-  ctx.beginPath(); ctx.moveTo(PLAY_L,DANGER_Y); ctx.lineTo(PLAY_R,DANGER_Y); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,55,35,0.65)'; ctx.lineWidth = 2; ctx.setLineDash([10,6]);
+  ctx.beginPath(); ctx.moveTo(PLAY_L, DANGER_Y); ctx.lineTo(PLAY_R, DANGER_Y); ctx.stroke();
   ctx.setLineDash([]);
-  ctx.fillStyle='rgba(255,70,40,.5)'; ctx.font='bold 9px sans-serif';
-  ctx.textAlign='left'; ctx.textBaseline='bottom'; ctx.letterSpacing='1px';
+  ctx.fillStyle = 'rgba(255,65,35,0.55)'; ctx.font = 'bold 9px sans-serif';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
   ctx.fillText('DANGER', PLAY_L+8, DANGER_Y-3);
   ctx.restore();
 }
