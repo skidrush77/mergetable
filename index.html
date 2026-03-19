@@ -8,10 +8,7 @@
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     body {
-      background: #4a2e14;
-      background-image:
-        repeating-linear-gradient(92deg, transparent, transparent 60px, rgba(0,0,0,0.04) 60px, rgba(0,0,0,0.04) 61px),
-        repeating-linear-gradient(178deg, transparent, transparent 40px, rgba(255,255,255,0.02) 40px, rgba(255,255,255,0.02) 41px);
+      background: linear-gradient(180deg, #3a9cc8 0%, #1e7aaa 40%, #1460a0 100%);
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -179,21 +176,18 @@ let frame = 0;
 const canvas = document.getElementById('c');
 const ctx    = canvas.getContext('2d');
 
-/* ── Pre-baked wood grain lines ──────────────────────── */
-const GRAIN = Array.from({length:28}, (_, i)=>({
-  y0:  CEIL_Y + (i/(28)) * (DANGER_Y - CEIL_Y),
-  amp: (Math.random()-0.5) * 6,
-  frq: Math.random() * 0.008 + 0.004,
-  ph:  Math.random() * Math.PI * 2,
-  op:  Math.random() * 0.055 + 0.02,
-  dark: Math.random() > 0.6,
-}));
-/* Knot positions */
-const KNOTS = Array.from({length:3}, ()=>({
-  x: PLAY_L + Math.random()*PLAY_W,
-  y: CEIL_Y + Math.random()*(DANGER_Y - CEIL_Y),
-  r: Math.random()*14+8,
-}));
+/* ── Cloud helper (drawn in drawBg) ─────────────────── */
+function drawCloud(x, y, s) {
+  ctx.save();
+  ctx.globalAlpha = 0.72 * s;
+  ctx.fillStyle = '#e8f6ff';
+  ctx.beginPath();
+  ctx.arc(x,          y,          13*s, 0, Math.PI*2);
+  ctx.arc(x + 18*s,   y - 5*s,    17*s, 0, Math.PI*2);
+  ctx.arc(x + 36*s,   y,          11*s, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
 
 /* roundRect polyfill */
 if (!CanvasRenderingContext2D.prototype.roundRect) {
@@ -452,110 +446,214 @@ function endGame() {
    ║  DRAWING                                            ║
    ╚══════════════════════════════════════════════════════╝ */
 function drawBg() {
-  /* ── Wood table base colour (top-view) ── */
-  const wood = ctx.createLinearGradient(0, CEIL_Y, CW, DANGER_Y);
-  wood.addColorStop(0,    '#7a4a22');
-  wood.addColorStop(0.18, '#8c5828');
-  wood.addColorStop(0.42, '#7a4922');
-  wood.addColorStop(0.65, '#8a5626');
-  wood.addColorStop(0.85, '#7c4b23');
-  wood.addColorStop(1,    '#6e4120');
-  ctx.fillStyle = wood;
-  ctx.fillRect(PLAY_L, CEIL_Y, PLAY_W, DANGER_Y - CEIL_Y);
+  /* ════ BEACH BACKGROUND — fills entire canvas ════ */
 
-  /* ── Wood grain lines ── */
-  ctx.save();
-  ctx.beginPath(); ctx.rect(PLAY_L, CEIL_Y, PLAY_W, DANGER_Y - CEIL_Y); ctx.clip();
-  GRAIN.forEach(g => {
-    ctx.strokeStyle = g.dark
-      ? `rgba(0,0,0,${g.op})`
-      : `rgba(255,220,160,${g.op * 0.6})`;
-    ctx.lineWidth = g.dark ? 1.2 : 0.8;
+  /* Sky gradient — top of canvas down past the table ceiling */
+  const sky = ctx.createLinearGradient(0, 0, 0, CH * 0.54);
+  sky.addColorStop(0,    '#1e6fa8');
+  sky.addColorStop(0.3,  '#3a96c4');
+  sky.addColorStop(0.7,  '#60b8d8');
+  sky.addColorStop(1,    '#90d4ea');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, CW, CH * 0.54);
+
+  /* Ocean gradient — lower half (visible below table) */
+  const oc = ctx.createLinearGradient(0, CH * 0.52, 0, CH);
+  oc.addColorStop(0,    '#0a5e8c');
+  oc.addColorStop(0.25, '#1278a8');
+  oc.addColorStop(0.6,  '#2090c0');
+  oc.addColorStop(1,    '#44aed4');
+  ctx.fillStyle = oc;
+  ctx.fillRect(0, CH * 0.52, CW, CH);
+
+  /* Horizon glow stripe */
+  const hg = ctx.createLinearGradient(0, CH*0.50, 0, CH*0.57);
+  hg.addColorStop(0,   'rgba(255,220,140,0.0)');
+  hg.addColorStop(0.45,'rgba(255,210,120,0.32)');
+  hg.addColorStop(1,   'rgba(20,100,160,0.0)');
+  ctx.fillStyle = hg;
+  ctx.fillRect(0, CH*0.50, CW, CH*0.07);
+
+  /* Sun — upper-right, mostly in the sky band above the table */
+  const sunX = CW * 0.82, sunY = 30;
+  /* Rays */
+  for (let i = 0; i < 10; i++) {
+    const a = (i/10)*Math.PI*2;
+    ctx.strokeStyle = 'rgba(255,235,110,0.18)';
+    ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(PLAY_L, g.y0);
-    for (let x = PLAY_L; x <= PLAY_R; x += 18) {
-      const y = g.y0 + Math.sin(x * g.frq + g.ph) * g.amp;
-      ctx.lineTo(x, y);
-    }
+    ctx.moveTo(sunX + Math.cos(a)*22, sunY + Math.sin(a)*22);
+    ctx.lineTo(sunX + Math.cos(a)*42, sunY + Math.sin(a)*42);
     ctx.stroke();
-  });
-  /* Knots */
-  KNOTS.forEach(k => {
-    const kg = ctx.createRadialGradient(k.x, k.y, 1, k.x, k.y, k.r);
-    kg.addColorStop(0,   'rgba(50,22,5,0.5)');
-    kg.addColorStop(0.5, 'rgba(80,40,12,0.25)');
-    kg.addColorStop(1,   'transparent');
-    ctx.fillStyle = kg;
-    ctx.beginPath(); ctx.ellipse(k.x, k.y, k.r, k.r*0.65, 0.3, 0, Math.PI*2); ctx.fill();
-  });
+  }
+  /* Disc */
+  const sdg = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, 22);
+  sdg.addColorStop(0,    '#fffce0');
+  sdg.addColorStop(0.45, '#ffd740');
+  sdg.addColorStop(0.85, '#ffaa00');
+  sdg.addColorStop(1,    'transparent');
+  ctx.fillStyle = sdg;
+  ctx.beginPath(); ctx.arc(sunX, sunY, 22, 0, Math.PI*2); ctx.fill();
+
+  /* Clouds — clipped to sky area so they don't show over table */
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, 0, CW, CEIL_Y); ctx.clip();
+  drawCloud(28,  30, 0.75);
+  drawCloud(155, 18, 0.55);
+  drawCloud(310, 34, 0.65);
   ctx.restore();
 
-  /* ── Ambient vignette inside play area ── */
-  const vig = ctx.createRadialGradient(CW/2, (CEIL_Y+DANGER_Y)/2, PLAY_W*0.15, CW/2, (CEIL_Y+DANGER_Y)/2, PLAY_W*0.75);
-  vig.addColorStop(0, 'transparent');
-  vig.addColorStop(1, 'rgba(0,0,0,0.18)');
-  ctx.fillStyle = vig;
-  ctx.fillRect(PLAY_L, CEIL_Y, PLAY_W, DANGER_Y - CEIL_Y);
+  /* Ocean sparkles — visible at bottom below table legs */
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  [[48,668],[138,684],[228,670],[318,682],[400,660]].forEach(([sx,sy])=>{
+    ctx.save(); ctx.translate(sx,sy); ctx.scale(3.2, 0.7);
+    ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  });
 }
 
 function drawWalls() {
-  /* ── Thick wooden frame (top-view table edge) ── */
-  // Full canvas fill = dark wood surround
-  ctx.fillStyle = '#3a1e08';
-  ctx.fillRect(0, 0, CW, CH);
+  const FACE_H = 24;   // table front-face height (3D edge)
+  const LEG_W  = 22;   // leg width
+  const LEG_H  = 52;   // leg height
+  const legTop = DANGER_Y + FACE_H;
 
-  // Play area wood already drawn in drawBg — redraw border area only
-  // Left border grain
-  const lg = ctx.createLinearGradient(0,0,WALL_T,0);
-  lg.addColorStop(0,'#2a1206'); lg.addColorStop(0.5,'#4a2510'); lg.addColorStop(1,'#3a1e08');
-  ctx.fillStyle = lg; ctx.fillRect(0, CEIL_Y, WALL_T, DANGER_Y-CEIL_Y);
-  // Right border grain
-  const rg = ctx.createLinearGradient(PLAY_R,0,CW,0);
-  rg.addColorStop(0,'#3a1e08'); rg.addColorStop(0.5,'#4a2510'); rg.addColorStop(1,'#2a1206');
-  ctx.fillStyle = rg; ctx.fillRect(PLAY_R, CEIL_Y, WALL_T, DANGER_Y-CEIL_Y);
-  // Top border
-  const tg = ctx.createLinearGradient(0,0,0,CEIL_Y);
-  tg.addColorStop(0,'#2a1206'); tg.addColorStop(1,'#4a2510');
-  ctx.fillStyle = tg; ctx.fillRect(0, 0, CW, CEIL_Y);
+  /* ════ LEFT / RIGHT WOODEN BORDER WALLS ════ */
+  const lwg = ctx.createLinearGradient(0, 0, WALL_T, 0);
+  lwg.addColorStop(0,   '#3a1a05');
+  lwg.addColorStop(0.55,'#7a4415');
+  lwg.addColorStop(1,   '#9e5c20');
+  ctx.fillStyle = lwg;
+  ctx.fillRect(0, CEIL_Y, WALL_T, DANGER_Y - CEIL_Y);
 
-  /* Inner edge bevel highlights */
-  ctx.strokeStyle = 'rgba(180,110,40,0.55)'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(PLAY_L, CEIL_Y); ctx.lineTo(PLAY_L, DANGER_Y); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(PLAY_R, CEIL_Y); ctx.lineTo(PLAY_R, DANGER_Y); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(PLAY_L, CEIL_Y); ctx.lineTo(PLAY_R, CEIL_Y); ctx.stroke();
+  const rwg = ctx.createLinearGradient(PLAY_R, 0, CW, 0);
+  rwg.addColorStop(0,   '#9e5c20');
+  rwg.addColorStop(0.45,'#7a4415');
+  rwg.addColorStop(1,   '#3a1a05');
+  ctx.fillStyle = rwg;
+  ctx.fillRect(PLAY_R, CEIL_Y, WALL_T, DANGER_Y - CEIL_Y);
 
-  /* Subtle inner shadow along walls */
-  const lsh = ctx.createLinearGradient(PLAY_L,0, PLAY_L+16,0);
-  lsh.addColorStop(0,'rgba(0,0,0,0.22)'); lsh.addColorStop(1,'transparent');
-  ctx.fillStyle = lsh; ctx.fillRect(PLAY_L, CEIL_Y, 16, DANGER_Y-CEIL_Y);
-  const rsh = ctx.createLinearGradient(PLAY_R-16,0, PLAY_R,0);
-  rsh.addColorStop(0,'transparent'); rsh.addColorStop(1,'rgba(0,0,0,0.22)');
-  ctx.fillStyle = rsh; ctx.fillRect(PLAY_R-16, CEIL_Y, 16, DANGER_Y-CEIL_Y);
-  const tsh = ctx.createLinearGradient(0,CEIL_Y, 0,CEIL_Y+16);
-  tsh.addColorStop(0,'rgba(0,0,0,0.25)'); tsh.addColorStop(1,'transparent');
-  ctx.fillStyle = tsh; ctx.fillRect(PLAY_L, CEIL_Y, PLAY_W, 16);
+  /* ════ TOP BORDER — back edge of table, semi-transparent to show sky ════ */
+  const tbg = ctx.createLinearGradient(0, 0, 0, CEIL_Y);
+  tbg.addColorStop(0,   'rgba(30,12,3,0.15)');
+  tbg.addColorStop(0.5, 'rgba(70,35,10,0.6)');
+  tbg.addColorStop(1,   '#8a5018');
+  ctx.fillStyle = tbg;
+  ctx.fillRect(0, 0, CW, CEIL_Y);
 
-  /* Ceiling label */
-  ctx.globalAlpha=.3; ctx.font='bold 11px sans-serif';
-  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle='#f0c060';
-  ctx.fillText('▼  DRINK MERGE  ▼', CW/2, CEIL_Y/2);
-  ctx.globalAlpha=1;
+  /* ════ TABLE SURFACE — trapezoid perspective effect ════
+     Drawn as a rectangle but with converging perspective lines */
+  const surf = ctx.createLinearGradient(0, CEIL_Y, 0, DANGER_Y);
+  surf.addColorStop(0,    '#c0a870');   // darker / farther
+  surf.addColorStop(0.18, '#d4bc84');
+  surf.addColorStop(0.45, '#e8cf98');
+  surf.addColorStop(0.75, '#f2dda8');
+  surf.addColorStop(1,    '#faecc0');   // brighter / closer
+  ctx.fillStyle = surf;
+  ctx.fillRect(PLAY_L, CEIL_Y, PLAY_W, DANGER_Y - CEIL_Y);
 
-  /* ── Launcher area below danger line ── */
-  const la = ctx.createLinearGradient(0, DANGER_Y, 0, CH);
-  la.addColorStop(0,'#3a1e08'); la.addColorStop(1,'#2a1408');
-  ctx.fillStyle = la; ctx.fillRect(0, DANGER_Y, CW, CH-DANGER_Y);
-  // Launcher area wood grain
-  for (let i=0;i<3;i++){
-    ctx.strokeStyle=`rgba(100,55,18,${.07+i*.02})`; ctx.lineWidth=1.2;
+  /* Perspective grid lines on the surface */
+  ctx.save();
+  ctx.beginPath(); ctx.rect(PLAY_L, CEIL_Y, PLAY_W, DANGER_Y - CEIL_Y); ctx.clip();
+
+  // Horizontal lines — converge (get closer together) towards the top
+  for (let i = 0; i <= 11; i++) {
+    const t   = i / 11;
+    const y   = CEIL_Y + t * (DANGER_Y - CEIL_Y);
+    const ins = (1 - t) * 24;     // lines inset more at the top
+    ctx.strokeStyle = `rgba(140,100,40,${0.055 + t * 0.045})`;
+    ctx.lineWidth = 0.85;
     ctx.beginPath();
-    ctx.moveTo(PLAY_L, DANGER_Y+8+i*9);
-    ctx.bezierCurveTo(CW*.3, DANGER_Y+6+i*9, CW*.7, DANGER_Y+10+i*9, PLAY_R, DANGER_Y+8+i*9);
+    ctx.moveTo(PLAY_L + ins, y);
+    ctx.lineTo(PLAY_R - ins, y);
     ctx.stroke();
   }
-  // Bright lip at top of launcher area
-  ctx.strokeStyle='rgba(200,140,50,.5)'; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.moveTo(PLAY_L,DANGER_Y); ctx.lineTo(PLAY_R,DANGER_Y); ctx.stroke();
+  // Vertical lines — converge toward a vanishing point at top-centre
+  for (let i = 0; i <= 7; i++) {
+    const t    = i / 7;
+    const xTop = PLAY_L + 28 + t * (PLAY_W - 56);  // compressed range at top
+    const xBot = PLAY_L + t * PLAY_W;
+    ctx.strokeStyle = 'rgba(140,100,40,0.055)';
+    ctx.lineWidth = 0.85;
+    ctx.beginPath(); ctx.moveTo(xTop, CEIL_Y); ctx.lineTo(xBot, DANGER_Y); ctx.stroke();
+  }
+  ctx.restore();
+
+  /* ── Inner edge bevels (bright rim of the table top) ── */
+  ctx.strokeStyle = 'rgba(215,170,80,0.70)'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(PLAY_L, CEIL_Y);   ctx.lineTo(PLAY_L, DANGER_Y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(PLAY_R, CEIL_Y);   ctx.lineTo(PLAY_R, DANGER_Y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(PLAY_L, CEIL_Y);   ctx.lineTo(PLAY_R, CEIL_Y);   ctx.stroke();
+
+  /* ── Inner shadows along edges (depth) ── */
+  const lsh = ctx.createLinearGradient(PLAY_L, 0, PLAY_L+20, 0);
+  lsh.addColorStop(0,'rgba(0,0,0,0.22)'); lsh.addColorStop(1,'transparent');
+  ctx.fillStyle = lsh; ctx.fillRect(PLAY_L, CEIL_Y, 20, DANGER_Y - CEIL_Y);
+
+  const rsh = ctx.createLinearGradient(PLAY_R-20, 0, PLAY_R, 0);
+  rsh.addColorStop(0,'transparent'); rsh.addColorStop(1,'rgba(0,0,0,0.22)');
+  ctx.fillStyle = rsh; ctx.fillRect(PLAY_R-20, CEIL_Y, 20, DANGER_Y - CEIL_Y);
+
+  const tsh = ctx.createLinearGradient(0, CEIL_Y, 0, CEIL_Y+24);
+  tsh.addColorStop(0,'rgba(0,0,0,0.28)'); tsh.addColorStop(1,'transparent');
+  ctx.fillStyle = tsh; ctx.fillRect(PLAY_L, CEIL_Y, PLAY_W, 24);
+
+  /* ════ TABLE FRONT FACE — 3D visible edge below danger line ════ */
+  const ffg = ctx.createLinearGradient(0, DANGER_Y, 0, DANGER_Y + FACE_H);
+  ffg.addColorStop(0,    '#c07820');
+  ffg.addColorStop(0.45, '#9a5c14');
+  ffg.addColorStop(1,    '#4e2c06');
+  ctx.fillStyle = ffg;
+  ctx.fillRect(PLAY_L - 2, DANGER_Y, PLAY_W + 4, FACE_H);
+
+  /* Top lip highlight */
+  const lip = ctx.createLinearGradient(0, DANGER_Y, 0, DANGER_Y + 4);
+  lip.addColorStop(0, 'rgba(255,215,100,0.6)');
+  lip.addColorStop(1, 'transparent');
+  ctx.fillStyle = lip; ctx.fillRect(PLAY_L - 2, DANGER_Y, PLAY_W + 4, 4);
+
+  /* Bottom shadow of front face */
+  ctx.fillStyle = 'rgba(0,0,0,0.38)';
+  ctx.fillRect(PLAY_L - 2, DANGER_Y + FACE_H - 2.5, PLAY_W + 4, 2.5);
+
+  /* ════ TABLE LEGS ════ */
+  const legPositions = [PLAY_L + 10, PLAY_R - 10 - LEG_W];
+  legPositions.forEach(lx => {
+    /* Leg body */
+    const lg = ctx.createLinearGradient(lx, 0, lx + LEG_W, 0);
+    lg.addColorStop(0,    '#321604');
+    lg.addColorStop(0.35, '#7a4010');
+    lg.addColorStop(0.65, '#9c5818');
+    lg.addColorStop(1,    '#5e3008');
+    ctx.fillStyle = lg;
+    ctx.fillRect(lx, legTop, LEG_W, LEG_H);
+
+    /* Leg highlight strip */
+    ctx.fillStyle = 'rgba(255,185,80,0.18)';
+    ctx.fillRect(lx + 4, legTop + 3, 4, LEG_H - 6);
+
+    /* Foot base */
+    ctx.fillStyle = '#241004';
+    ctx.fillRect(lx - 4, legTop + LEG_H, LEG_W + 8, 9);
+
+    /* Foot ground shadow */
+    const fsh = ctx.createRadialGradient(lx + LEG_W/2, legTop + LEG_H + 9, 1,
+                                          lx + LEG_W/2, legTop + LEG_H + 9, 18);
+    fsh.addColorStop(0, 'rgba(0,0,0,0.35)');
+    fsh.addColorStop(1, 'transparent');
+    ctx.fillStyle = fsh;
+    ctx.beginPath();
+    ctx.ellipse(lx + LEG_W/2, legTop + LEG_H + 12, 18, 5, 0, 0, Math.PI*2);
+    ctx.fill();
+  });
+
+  /* ════ TITLE on top border ════ */
+  ctx.globalAlpha = 0.50;
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffe0a0';
+  ctx.fillText('🍹  DRINK MERGE  🍹', CW/2, CEIL_Y * 0.52);
+  ctx.globalAlpha = 1;
 }
 
 function drawDangerLine() {
