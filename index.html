@@ -141,12 +141,16 @@ const { Engine, Bodies, Body, World, Events, Vector } = Matter;
 
 /* ── Layout ─────────────────────────────────────────── */
 const CW = 460, CH = 700;          // canvas
-const WALL_T   = 22;               // wall thickness
-const CEIL_Y   = 50;               // ceiling top-edge Y
-const PLAY_L   = WALL_T;           // left inner edge  x = 22
-const PLAY_R   = CW - WALL_T;      // right inner edge x = 438
-const PLAY_W   = PLAY_R - PLAY_L;  // 416
-const DANGER_Y = 620;              // game-over line
+const WALL_T        = 22;          // wall thickness
+const CEIL_Y        = 50;          // ceiling top-edge Y
+const PLAY_L        = WALL_T;      // left inner edge  x = 22
+const PLAY_R        = CW - WALL_T; // right inner edge x = 438
+const PLAY_W        = PLAY_R - PLAY_L; // 416
+const DANGER_Y      = 620;         // game-over line
+const TABLE_TAPER   = 48;          // trapezoid taper: top edge is narrower by this on each side
+// Trapezoid top corners (used by both rendering and physics)
+const TRAP_TL_X     = PLAY_L + TABLE_TAPER; // 70
+const TRAP_TR_X     = PLAY_R - TABLE_TAPER; // 390
 const LAUNCH_Y = 655;              // launcher centre Y (below danger)
 const LAUNCH_X = CW / 2;          // launcher centre X
 
@@ -217,10 +221,38 @@ function setupPhysics() {
     restitution:0.08, friction:0.6, frictionStatic:0.8,
   };
 
-  // Left wall, right wall, ceiling
-  const lw = Bodies.rectangle(WALL_T/2,     CH/2, WALL_T,   CH*2,  wallOpts('lwall'));
-  const rw = Bodies.rectangle(CW-WALL_T/2,  CH/2, WALL_T,   CH*2,  wallOpts('rwall'));
-  const tw = Bodies.rectangle(CW/2,         CEIL_Y - WALL_T/2, CW*2, WALL_T, ceilOpts);
+  /* ── Angled left/right walls that match the trapezoid visual ── */
+  // The left wall inner face runs from (TRAP_TL_X, CEIL_Y) → (PLAY_L, DANGER_Y)
+  // The right wall inner face runs from (TRAP_TR_X, CEIL_Y) → (PLAY_R, DANGER_Y)
+  const wallH    = DANGER_Y - CEIL_Y;                       // 570
+  const wallLen  = Math.hypot(TABLE_TAPER, wallH) + 30;     // +30px extra for corner overlap
+  const wallAng  = Math.atan2(TABLE_TAPER, wallH);           // ≈ 0.0840 rad
+  const wallThk  = 32;
+  const cosA     = Math.cos(wallAng);
+  const sinA     = Math.sin(wallAng);
+
+  // Left wall: center = inner-face midpoint shifted outward (leftward)
+  const lwMidX   = (TRAP_TL_X + PLAY_L) / 2;               // 46
+  const lwMidY   = (CEIL_Y + DANGER_Y) / 2;                 // 335
+  const lw = Bodies.rectangle(
+    lwMidX - cosA * wallThk / 2,
+    lwMidY - sinA * wallThk / 2,
+    wallThk, wallLen,
+    { ...wallOpts('lwall'), angle: wallAng }
+  );
+
+  // Right wall: center = inner-face midpoint shifted outward (rightward)
+  const rwMidX   = (TRAP_TR_X + PLAY_R) / 2;               // 414
+  const rwMidY   = (CEIL_Y + DANGER_Y) / 2;                 // 335
+  const rw = Bodies.rectangle(
+    rwMidX + cosA * wallThk / 2,
+    rwMidY - sinA * wallThk / 2,
+    wallThk, wallLen,
+    { ...wallOpts('rwall'), angle: -wallAng }
+  );
+
+  // Ceiling: horizontal, matches trapezoid top width (extra wide for corner safety)
+  const tw = Bodies.rectangle(CW / 2, CEIL_Y - WALL_T / 2, CW * 2, WALL_T, ceilOpts);
   World.add(world, [lw, rw, tw]);
 
   Events.on(engine, 'collisionStart', onCollision);
@@ -529,7 +561,7 @@ function drawTable() {
      - 4 legs: front 2 thick/dark, back 2 thin/light
   ══════════════════════════════════════════════════════ */
 
-  const TAPER   = 48;   // top edge narrowed by this on each side
+  const TAPER   = TABLE_TAPER;   // top edge narrowed by this on each side (global constant)
   const FACE_H  = 40;   // front-face (table thickness) height
   const FL_W    = 22, FL_H = 34;   // front leg: wide & tall (prominent)
   const BL_W    = 11, BL_H = 20;   // back  leg: narrow & short (receding)
@@ -702,14 +734,65 @@ function drawDangerLine() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   drawDrink(ctx, cx, cy, type)
-   Draws a fully custom drink icon for the given ITEMS tier.
-   Always draws centered at (cx, cy). Safe to call from any context.
+   drawDrink(ctx, cx, cy, type)  — 3D drink renderer
+   Each drink: ground shadow · base fill · cylinder L→R shading ·
+               liquid-surface oval · specular highlight · 2px border
 ═══════════════════════════════════════════════════════════════════ */
 function drawDrink(ctx, cx, cy, type) {
   const r = ITEMS[type].r;
   ctx.save();
   ctx.translate(cx, cy);
+
+  /* ── shared 3D helpers ───────────────────────────────────────── */
+
+  // Left-bright → right-dark cylinder gradient; call INSIDE a clip region
+  function cylShade(w, tY, bY) {
+    const sg = ctx.createLinearGradient(-w, 0, w, 0);
+    sg.addColorStop(0,    'rgba(255,255,255,0.46)');
+    sg.addColorStop(0.24, 'rgba(255,255,255,0.16)');
+    sg.addColorStop(0.48, 'rgba(255,255,255,0.00)');
+    sg.addColorStop(0.65, 'rgba(0,0,0,0.00)');
+    sg.addColorStop(0.84, 'rgba(0,0,0,0.18)');
+    sg.addColorStop(1,    'rgba(0,0,0,0.44)');
+    ctx.fillStyle = sg;
+    ctx.fillRect(-w - 4, tY - 4, w * 2 + 8, bY - tY + 8);
+  }
+
+  // Ground shadow (flat dark ellipse below the item)
+  function groundShadow(bY, w) {
+    ctx.save(); ctx.globalAlpha = 0.30; ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(r * 0.10, bY + r * 0.16, w, w * 0.20, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.restore();
+  }
+
+  // Strong specular highlight — white translucent ellipse, upper-left
+  function specular(tW, tY, cH) {
+    ctx.fillStyle = 'rgba(255,255,255,0.48)';
+    ctx.beginPath();
+    ctx.ellipse(-tW * 0.34, tY + cH * 0.20, tW * 0.28, cH * 0.15, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    // Tiny secondary rim glint
+    ctx.fillStyle = 'rgba(255,255,255,0.28)';
+    ctx.beginPath();
+    ctx.ellipse(-tW * 0.52, tY + cH * 0.11, tW * 0.10, cH * 0.06, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Liquid surface oval at cup rim (top-down look into the drink)
+  function liquidSurface(x, y, w, h, col) {
+    ctx.save(); ctx.globalAlpha = 0.78;
+    // Base oval in liquid colour
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.ellipse(x, y, w, h, 0, 0, Math.PI * 2); ctx.fill();
+    // White reflection layer on top of liquid
+    const rg = ctx.createRadialGradient(x - w * 0.20, y - h * 0.15, 0, x, y, w);
+    rg.addColorStop(0,   'rgba(255,255,255,0.55)');
+    rg.addColorStop(0.45,'rgba(255,255,255,0.20)');
+    rg.addColorStop(1,   'rgba(255,255,255,0.00)');
+    ctx.fillStyle = rg;
+    ctx.beginPath(); ctx.ellipse(x, y, w, h, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
 
   switch (type) {
 
@@ -717,31 +800,26 @@ function drawDrink(ctx, cx, cy, type) {
   case 0: {
     const cH = r * 1.06, tW = r * 0.88, bW = r * 0.56;
     const tY = -cH * 0.46, bY = cH * 0.54;
+    groundShadow(bY, bW + 3);
     // Straw (behind body)
     ctx.fillStyle = '#8B4513';
     ctx.fillRect(tW * 0.28, tY - r * 0.55, r * 0.13, r * 0.78);
-    // Body
+    // Body fill
+    const cupPath0 = () => { ctx.beginPath(); ctx.moveTo(-tW,tY); ctx.lineTo(tW,tY); ctx.lineTo(bW,bY); ctx.lineTo(-bW,bY); ctx.closePath(); };
     const g0 = ctx.createLinearGradient(0, tY, 0, bY);
-    g0.addColorStop(0, '#FFA040'); g0.addColorStop(1, '#E05000');
-    ctx.fillStyle = g0;
-    ctx.beginPath();
-    ctx.moveTo(-tW, tY); ctx.lineTo(tW, tY);
-    ctx.lineTo(bW, bY);  ctx.lineTo(-bW, bY);
-    ctx.closePath(); ctx.fill();
-    // Rim
-    ctx.fillStyle = '#CC5500';
+    g0.addColorStop(0, '#FFAA50'); g0.addColorStop(1, '#D04500');
+    ctx.fillStyle = g0; cupPath0(); ctx.fill();
+    // Cylinder L→R shading
+    ctx.save(); cupPath0(); ctx.clip(); cylShade(tW, tY, bY); ctx.restore();
+    // Rim bar
+    ctx.fillStyle = '#BB3300';
     ctx.fillRect(-tW - 1, tY, (tW + 1) * 2, r * 0.14);
-    // Border
-    ctx.strokeStyle = '#B84400'; ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(-tW, tY); ctx.lineTo(tW, tY);
-    ctx.lineTo(bW, bY);  ctx.lineTo(-bW, bY);
-    ctx.closePath(); ctx.stroke();
-    // Highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.32)';
-    ctx.beginPath();
-    ctx.ellipse(-tW * 0.38, tY + cH * 0.28, tW * 0.20, cH * 0.17, -0.4, 0, Math.PI * 2);
-    ctx.fill();
+    // Liquid surface oval
+    liquidSurface(0, tY + r * 0.07, tW * 0.84, tW * 0.25, '#FF7700');
+    // Specular
+    specular(tW, tY, cH);
+    // Border 2px dark
+    ctx.strokeStyle = '#882200'; ctx.lineWidth = 2; cupPath0(); ctx.stroke();
     break;
   }
 
@@ -749,44 +827,30 @@ function drawDrink(ctx, cx, cy, type) {
   case 1: {
     const cH = r * 1.08, tW = r * 0.76, bW = r * 0.50;
     const tY = -cH * 0.46, bY = cH * 0.54, lidH = cH * 0.16;
-    // Straw
+    groundShadow(bY, bW + 3);
+    // Straw (behind)
     ctx.fillStyle = '#CC1111';
     ctx.fillRect(r * 0.24, tY - r * 0.45, r * 0.12, r * 0.62);
-    // Body
-    const g1 = ctx.createLinearGradient(-tW, 0, tW, 0);
-    g1.addColorStop(0, '#CC2020'); g1.addColorStop(0.45, '#FF4444'); g1.addColorStop(1, '#BB1010');
-    ctx.fillStyle = g1;
-    ctx.beginPath();
-    ctx.moveTo(-tW, tY + lidH); ctx.lineTo(tW, tY + lidH);
-    ctx.lineTo(bW, bY);         ctx.lineTo(-bW, bY);
-    ctx.closePath(); ctx.fill();
+    // Body fill
+    const cupPath1 = () => { ctx.beginPath(); ctx.moveTo(-tW,tY+lidH); ctx.lineTo(tW,tY+lidH); ctx.lineTo(bW,bY); ctx.lineTo(-bW,bY); ctx.closePath(); };
+    const g1 = ctx.createLinearGradient(0, tY+lidH, 0, bY);
+    g1.addColorStop(0, '#FF6666'); g1.addColorStop(1, '#AA1010');
+    ctx.fillStyle = g1; cupPath1(); ctx.fill();
+    ctx.save(); cupPath1(); ctx.clip(); cylShade(tW, tY+lidH, bY); ctx.restore();
     // Dome lid
-    const ld = ctx.createLinearGradient(0, tY, 0, tY + lidH);
-    ld.addColorStop(0, '#881515'); ld.addColorStop(1, '#AA2020');
-    ctx.fillStyle = ld;
-    ctx.beginPath();
-    ctx.moveTo(-(tW + r * 0.08), tY + lidH);
-    ctx.quadraticCurveTo(0, tY - lidH * 0.5, tW + r * 0.08, tY + lidH);
-    ctx.closePath(); ctx.fill();
+    const lidPath1 = () => { ctx.beginPath(); ctx.moveTo(-(tW+r*0.08),tY+lidH); ctx.quadraticCurveTo(0,tY-lidH*0.5,tW+r*0.08,tY+lidH); ctx.closePath(); };
+    const ld = ctx.createLinearGradient(0, tY, 0, tY+lidH);
+    ld.addColorStop(0,'#991515'); ld.addColorStop(1,'#CC2020');
+    ctx.fillStyle = ld; lidPath1(); ctx.fill();
+    ctx.save(); lidPath1(); ctx.clip(); cylShade(tW, tY, tY+lidH); ctx.restore();
     // Band stripe
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = r * 0.10;
-    const bandY = tY + lidH + cH * 0.5;
-    const bandOff = (tW - bW) * 0.5;
-    ctx.beginPath();
-    ctx.moveTo(-tW * 0.9 + bandOff, bandY);
-    ctx.lineTo(tW * 0.9 - bandOff, bandY);
-    ctx.stroke();
-    // Border
-    ctx.strokeStyle = '#991111'; ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    ctx.moveTo(-tW, tY + lidH); ctx.lineTo(tW, tY + lidH);
-    ctx.lineTo(bW, bY);         ctx.lineTo(-bW, bY);
-    ctx.closePath(); ctx.stroke();
-    // Highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.28)';
-    ctx.beginPath();
-    ctx.ellipse(-tW * 0.36, tY + cH * 0.30, tW * 0.18, cH * 0.16, -0.4, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = r * 0.10;
+    const bandY1 = tY + lidH + cH * 0.52, bandOff1 = (tW - bW) * 0.52;
+    ctx.beginPath(); ctx.moveTo(-tW*0.88+bandOff1, bandY1); ctx.lineTo(tW*0.88-bandOff1, bandY1); ctx.stroke();
+    // Specular
+    specular(tW, tY, cH);
+    // Border 2px dark
+    ctx.strokeStyle = '#880808'; ctx.lineWidth = 2; cupPath1(); ctx.stroke();
     break;
   }
 
@@ -794,50 +858,38 @@ function drawDrink(ctx, cx, cy, type) {
   case 2: {
     const bW = r * 0.90;
     const tY = -r * 0.50, vY = r * 0.10, stemBotY = r * 0.64, baseW = r * 0.52;
+    groundShadow(stemBotY + r*0.06, baseW);
     // Umbrella (drawn behind glass)
-    const umbX = r * 0.30, umbY = tY - r * 0.06, umbR = r * 0.36;
+    const umbX = r*0.30, umbY = tY - r*0.06, umbR = r*0.36;
     const umbC = ['#FF5555','#FF9020','#44CC44','#4488FF'];
     for (let s = 0; s < 4; s++) {
       ctx.fillStyle = umbC[s];
-      ctx.beginPath();
-      ctx.moveTo(umbX, umbY + umbR * 0.38);
-      ctx.arc(umbX, umbY, umbR, Math.PI + s * Math.PI / 4, Math.PI + (s + 1) * Math.PI / 4);
-      ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(umbX, umbY+umbR*0.38);
+      ctx.arc(umbX, umbY, umbR, Math.PI+s*Math.PI/4, Math.PI+(s+1)*Math.PI/4); ctx.closePath(); ctx.fill();
     }
-    ctx.strokeStyle = 'rgba(180,90,40,0.7)'; ctx.lineWidth = 1.3;
-    ctx.beginPath(); ctx.moveTo(umbX, umbY + umbR * 0.38); ctx.lineTo(umbX, vY); ctx.stroke();
+    ctx.strokeStyle='rgba(180,90,40,0.7)'; ctx.lineWidth=1.3;
+    ctx.beginPath(); ctx.moveTo(umbX,umbY+umbR*0.38); ctx.lineTo(umbX,vY); ctx.stroke();
     // Bowl fill (V-shape)
+    const cupPath2 = () => { ctx.beginPath(); ctx.moveTo(-bW,tY); ctx.lineTo(bW,tY); ctx.lineTo(r*0.07,vY); ctx.lineTo(-r*0.07,vY); ctx.closePath(); };
     const g2 = ctx.createLinearGradient(0, tY, 0, vY);
-    g2.addColorStop(0, '#FF88C0'); g2.addColorStop(1, '#FF3395');
-    ctx.fillStyle = g2;
-    ctx.beginPath();
-    ctx.moveTo(-bW, tY); ctx.lineTo(bW, tY);
-    ctx.lineTo(r * 0.07, vY); ctx.lineTo(-r * 0.07, vY);
-    ctx.closePath(); ctx.fill();
+    g2.addColorStop(0,'#FF99CC'); g2.addColorStop(1,'#FF1080');
+    ctx.fillStyle=g2; cupPath2(); ctx.fill();
+    ctx.save(); cupPath2(); ctx.clip(); cylShade(bW, tY, vY); ctx.restore();
+    // Liquid surface in bowl (wide opening — most visible)
+    liquidSurface(0, tY+r*0.07, bW*0.84, bW*0.26, '#FF69B4');
     // Rim bar
-    ctx.fillStyle = '#CC2280';
-    ctx.beginPath(); ctx.roundRect(-bW - 2, tY - r * 0.07, (bW + 2) * 2, r * 0.13, 3); ctx.fill();
-    // Bowl border
-    ctx.strokeStyle = '#DD1188'; ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(-bW, tY); ctx.lineTo(bW, tY);
-    ctx.lineTo(r * 0.07, vY); ctx.lineTo(-r * 0.07, vY);
-    ctx.closePath(); ctx.stroke();
+    ctx.fillStyle='#CC2280'; ctx.beginPath(); ctx.roundRect(-bW-2,tY-r*0.07,(bW+2)*2,r*0.13,3); ctx.fill();
+    // Border 2px
+    ctx.strokeStyle='#AA0055'; ctx.lineWidth=2; cupPath2(); ctx.stroke();
     // Stem
-    ctx.strokeStyle = '#CC1180'; ctx.lineWidth = r * 0.09;
-    ctx.beginPath(); ctx.moveTo(0, vY); ctx.lineTo(0, stemBotY); ctx.stroke();
+    ctx.strokeStyle='#DD1188'; ctx.lineWidth=r*0.09;
+    ctx.beginPath(); ctx.moveTo(0,vY); ctx.lineTo(0,stemBotY); ctx.stroke();
     // Base
-    ctx.fillStyle = '#FF69B4'; ctx.strokeStyle = '#CC1180'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.ellipse(0, stemBotY, baseW, r * 0.09, 0, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
-    // Bowl highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.28)';
-    ctx.beginPath();
-    ctx.moveTo(-bW * 0.72, tY + (vY - tY) * 0.07);
-    ctx.lineTo(-bW * 0.22, tY + (vY - tY) * 0.07);
-    ctx.lineTo(-r * 0.10, tY + (vY - tY) * 0.46);
-    ctx.lineTo(-bW * 0.50, tY + (vY - tY) * 0.46);
-    ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#FF69B4'; ctx.strokeStyle='#AA0055'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.ellipse(0,stemBotY,baseW,r*0.09,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    // Specular on bowl
+    ctx.fillStyle='rgba(255,255,255,0.48)';
+    ctx.beginPath(); ctx.ellipse(-bW*0.55,tY+(vY-tY)*0.18,bW*0.22,(vY-tY)*0.17,-0.5,0,Math.PI*2); ctx.fill();
     break;
   }
 
@@ -845,260 +897,219 @@ function drawDrink(ctx, cx, cy, type) {
   case 3: {
     const cH = r * 1.08, tW = r * 0.84, bW = r * 0.70;
     const tY = -cH * 0.46, bY = cH * 0.54, cr = r * 0.18;
-    // Body
-    const g3 = ctx.createLinearGradient(-tW, 0, tW, 0);
-    g3.addColorStop(0, '#8030AA'); g3.addColorStop(0.45, '#B060CC'); g3.addColorStop(1, '#8030AA');
-    ctx.fillStyle = g3;
-    ctx.beginPath();
-    ctx.moveTo(-tW + cr, tY); ctx.lineTo(tW - cr, tY);
-    ctx.arcTo(tW, tY, tW, tY + cr, cr);
-    ctx.lineTo(bW, bY - cr); ctx.arcTo(bW, bY, bW - cr, bY, cr);
-    ctx.lineTo(-bW + cr, bY); ctx.arcTo(-bW, bY, -bW, bY - cr, cr);
-    ctx.lineTo(-tW, tY + cr); ctx.arcTo(-tW, tY, -tW + cr, tY, cr);
-    ctx.closePath(); ctx.fill();
+    groundShadow(bY, bW + 2);
+    // Body fill (rounded trapezoid)
+    const cupPath3 = () => {
+      ctx.beginPath();
+      ctx.moveTo(-tW+cr,tY); ctx.lineTo(tW-cr,tY); ctx.arcTo(tW,tY,tW,tY+cr,cr);
+      ctx.lineTo(bW,bY-cr); ctx.arcTo(bW,bY,bW-cr,bY,cr);
+      ctx.lineTo(-bW+cr,bY); ctx.arcTo(-bW,bY,-bW,bY-cr,cr);
+      ctx.lineTo(-tW,tY+cr); ctx.arcTo(-tW,tY,-tW+cr,tY,cr); ctx.closePath();
+    };
+    const g3 = ctx.createLinearGradient(0, tY, 0, bY);
+    g3.addColorStop(0,'#C070DC'); g3.addColorStop(1,'#5C1880');
+    ctx.fillStyle=g3; cupPath3(); ctx.fill();
+    ctx.save(); cupPath3(); ctx.clip(); cylShade(tW, tY, bY); ctx.restore();
     // Tapioca pearls
-    const pearlY = bY - r * 0.22, pearlR = r * 0.12;
-    for (let i = 0; i < 4; i++) {
-      const px = (i - 1.5) * pearlR * 2.6;
-      const pg = ctx.createRadialGradient(px - pearlR * 0.3, pearlY - pearlR * 0.3, 0, px, pearlY, pearlR);
-      pg.addColorStop(0, '#7030A0'); pg.addColorStop(1, '#250840');
-      ctx.fillStyle = pg;
-      ctx.beginPath(); ctx.arc(px, pearlY, pearlR, 0, Math.PI * 2); ctx.fill();
+    const pearlY = bY - r*0.22, pearlR = r*0.12;
+    for (let i=0; i<4; i++) {
+      const px = (i-1.5)*pearlR*2.6;
+      const pg = ctx.createRadialGradient(px-pearlR*0.3,pearlY-pearlR*0.3,0,px,pearlY,pearlR);
+      pg.addColorStop(0,'#7030A0'); pg.addColorStop(1,'#250840');
+      ctx.fillStyle=pg; ctx.beginPath(); ctx.arc(px,pearlY,pearlR,0,Math.PI*2); ctx.fill();
     }
-    // Thick straw (right, behind cup border)
-    const sX = tW - r * 0.13, sW = r * 0.18;
-    const sg = ctx.createLinearGradient(sX, 0, sX + sW, 0);
-    sg.addColorStop(0, '#6820A0'); sg.addColorStop(0.45, '#A050CC'); sg.addColorStop(1, '#6820A0');
-    ctx.fillStyle = sg;
-    ctx.beginPath(); ctx.roundRect(sX, tY - r * 0.52, sW, cH + r * 0.52, 3); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.20)';
-    ctx.fillRect(sX + 3, tY - r * 0.52, sW * 0.35, cH + r * 0.52);
+    // Thick straw
+    const sX=tW-r*0.13, sW=r*0.18;
+    const sg3=ctx.createLinearGradient(sX,0,sX+sW,0);
+    sg3.addColorStop(0,'#6820A0'); sg3.addColorStop(0.45,'#A050CC'); sg3.addColorStop(1,'#6820A0');
+    ctx.fillStyle=sg3; ctx.beginPath(); ctx.roundRect(sX,tY-r*0.52,sW,cH+r*0.52,3); ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,0.22)'; ctx.fillRect(sX+3,tY-r*0.52,sW*0.35,cH+r*0.52);
     // Seal lines on top
-    ctx.strokeStyle = 'rgba(140,70,200,0.55)'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(-tW * 0.72, tY + r * 0.05); ctx.lineTo(tW * 0.72, tY + r * 0.05); ctx.stroke();
-    // Border
-    ctx.strokeStyle = '#7020A0'; ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.moveTo(-tW + cr, tY); ctx.lineTo(tW - cr, tY);
-    ctx.arcTo(tW, tY, tW, tY + cr, cr);
-    ctx.lineTo(bW, bY - cr); ctx.arcTo(bW, bY, bW - cr, bY, cr);
-    ctx.lineTo(-bW + cr, bY); ctx.arcTo(-bW, bY, -bW, bY - cr, cr);
-    ctx.lineTo(-tW, tY + cr); ctx.arcTo(-tW, tY, -tW + cr, tY, cr);
-    ctx.closePath(); ctx.stroke();
-    // Highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.24)';
-    ctx.beginPath();
-    ctx.ellipse(-tW * 0.42, tY + cH * 0.27, tW * 0.18, cH * 0.16, -0.4, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.strokeStyle='rgba(140,70,200,0.55)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(-tW*0.72,tY+r*0.05); ctx.lineTo(tW*0.72,tY+r*0.05); ctx.stroke();
+    // Specular
+    specular(tW, tY, cH);
+    // Border 2px dark
+    ctx.strokeStyle='#4A0880'; ctx.lineWidth=2; cupPath3(); ctx.stroke();
     break;
   }
 
-  /* ── 4: 🍺 Beer mug ── yellow, handle, white foam bubbles ── */
+  /* ── 4: 🍺 Beer mug ── yellow, handle, white foam ── */
   case 4: {
     const mW = r * 0.72, cH = r * 1.06;
     const tY = -cH * 0.47, bY = cH * 0.53, foamH = cH * 0.22;
-    // Handle
-    ctx.strokeStyle = '#BB8800'; ctx.lineWidth = r * 0.16; ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(mW, tY + cH * 0.20);
-    ctx.bezierCurveTo(mW + r * 0.44, tY + cH * 0.20, mW + r * 0.44, bY - cH * 0.12, mW, bY - cH * 0.12);
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,215,80,0.35)'; ctx.lineWidth = r * 0.06;
-    ctx.beginPath();
-    ctx.moveTo(mW, tY + cH * 0.23);
-    ctx.bezierCurveTo(mW + r * 0.30, tY + cH * 0.23, mW + r * 0.30, bY - cH * 0.14, mW, bY - cH * 0.14);
-    ctx.stroke(); ctx.lineCap = 'butt';
-    // Beer body
-    const g4 = ctx.createLinearGradient(-mW, 0, mW, 0);
-    g4.addColorStop(0, '#CC9900'); g4.addColorStop(0.3, '#FFE066'); g4.addColorStop(0.7, '#FFD700'); g4.addColorStop(1, '#BB8800');
-    ctx.fillStyle = g4;
-    ctx.beginPath(); ctx.roundRect(-mW, tY + foamH, mW * 2, cH - foamH, [0, 0, 6, 6]); ctx.fill();
+    groundShadow(bY, mW + 4);
+    // Handle (behind body)
+    ctx.strokeStyle='#BB8800'; ctx.lineWidth=r*0.16; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(mW,tY+cH*0.20);
+    ctx.bezierCurveTo(mW+r*0.44,tY+cH*0.20,mW+r*0.44,bY-cH*0.12,mW,bY-cH*0.12); ctx.stroke();
+    ctx.strokeStyle='rgba(255,215,80,0.35)'; ctx.lineWidth=r*0.06;
+    ctx.beginPath(); ctx.moveTo(mW,tY+cH*0.23);
+    ctx.bezierCurveTo(mW+r*0.30,tY+cH*0.23,mW+r*0.30,bY-cH*0.14,mW,bY-cH*0.14); ctx.stroke();
+    ctx.lineCap='butt';
+    // Beer body fill
+    const mugPath4 = () => { ctx.beginPath(); ctx.roundRect(-mW,tY+foamH,mW*2,cH-foamH,[0,0,6,6]); };
+    const g4 = ctx.createLinearGradient(0,tY+foamH,0,bY);
+    g4.addColorStop(0,'#FFE566'); g4.addColorStop(1,'#AA7700');
+    ctx.fillStyle=g4; mugPath4(); ctx.fill();
+    ctx.save(); mugPath4(); ctx.clip(); cylShade(mW,tY+foamH,bY); ctx.restore();
+    // Bubble trail
+    ctx.fillStyle='rgba(255,245,120,0.50)';
+    for (let i=0;i<4;i++) { ctx.beginPath(); ctx.arc(-mW*0.38+i*mW*0.28,tY+foamH+cH*(0.22+(i*0.18)%0.56),r*0.05,0,Math.PI*2); ctx.fill(); }
     // Foam body
-    ctx.fillStyle = 'rgba(255,255,255,0.90)';
-    ctx.beginPath(); ctx.roundRect(-mW, tY + foamH * 0.38, mW * 2, foamH * 0.68, 3); ctx.fill();
-    // Foam bubbles (top row)
-    const nb = Math.max(4, Math.floor(r / 8));
-    for (let i = 0; i < nb; i++) {
-      const bx = -mW * 0.86 + (i / (nb - 1)) * mW * 1.72;
-      const br = r * (0.10 + (i % 2) * 0.05);
-      ctx.fillStyle = 'rgba(255,255,255,0.96)';
-      ctx.beginPath(); ctx.arc(bx, tY + foamH * 0.44, br, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,0.92)';
+    const foamPath4 = () => { ctx.beginPath(); ctx.roundRect(-mW,tY+foamH*0.38,mW*2,foamH*0.68,3); };
+    foamPath4(); ctx.fill();
+    ctx.save(); foamPath4(); ctx.clip(); cylShade(mW,tY+foamH*0.38,tY+foamH*1.06); ctx.restore();
+    // Foam bubbles
+    const nb4=Math.max(4,Math.floor(r/8));
+    for (let i=0;i<nb4;i++) {
+      const bxb=-mW*0.86+(i/(nb4-1))*mW*1.72;
+      ctx.fillStyle='rgba(255,255,255,0.96)'; ctx.beginPath(); ctx.arc(bxb,tY+foamH*0.44,r*(0.10+(i%2)*0.05),0,Math.PI*2); ctx.fill();
     }
-    // Beer bubble trail
-    ctx.fillStyle = 'rgba(255,240,120,0.50)';
-    for (let i = 0; i < 4; i++) {
-      ctx.beginPath();
-      ctx.arc(-mW * 0.38 + i * mW * 0.28, tY + foamH + cH * (0.22 + (i * 0.18) % 0.56), r * 0.05, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // Mug border
-    ctx.strokeStyle = '#997700'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.roundRect(-mW, tY + foamH, mW * 2, cH - foamH, [0, 0, 6, 6]); ctx.stroke();
-    // Highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.28)';
-    ctx.beginPath();
-    ctx.ellipse(-mW * 0.48, tY + cH * 0.40, mW * 0.18, cH * 0.17, -0.35, 0, Math.PI * 2);
-    ctx.fill();
+    // Mug border 2px
+    ctx.strokeStyle='#886600'; ctx.lineWidth=2; mugPath4(); ctx.stroke();
+    // Specular
+    specular(mW, tY+foamH, cH-foamH);
     break;
   }
 
   /* ── 5: 🍷 Wine glass ── dark red, bezier bowl, thin stem, base ── */
   case 5: {
     const bW = r * 0.80;
-    const tY = -r * 0.50, bowlBotY = r * 0.14, stemBotY = r * 0.64, baseY = r * 0.76, baseW = r * 0.62;
-    // Bowl fill
-    const g5 = ctx.createLinearGradient(0, tY, 0, bowlBotY);
-    g5.addColorStop(0, '#C01818'); g5.addColorStop(0.6, '#8B0000'); g5.addColorStop(1, '#600000');
-    ctx.fillStyle = g5;
-    ctx.beginPath();
-    ctx.moveTo(-bW * 0.82, tY);
-    ctx.bezierCurveTo(-bW, tY + (bowlBotY - tY) * 0.55, -r * 0.09, bowlBotY, -r * 0.09, bowlBotY);
-    ctx.lineTo(r * 0.09, bowlBotY);
-    ctx.bezierCurveTo(r * 0.09, bowlBotY, bW, tY + (bowlBotY - tY) * 0.55, bW * 0.82, tY);
-    ctx.closePath(); ctx.fill();
-    // Liquid meniscus
-    ctx.strokeStyle = 'rgba(180,0,0,0.5)'; ctx.lineWidth = 1;
-    const liqT = tY + (bowlBotY - tY) * 0.15;
-    ctx.beginPath();
-    ctx.moveTo(-bW * 0.72, liqT); ctx.quadraticCurveTo(0, liqT + r * 0.04, bW * 0.72, liqT); ctx.stroke();
-    // Glass bowl border
-    ctx.strokeStyle = '#6B0000'; ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.moveTo(-bW * 0.82, tY);
-    ctx.bezierCurveTo(-bW, tY + (bowlBotY - tY) * 0.55, -r * 0.09, bowlBotY, -r * 0.09, bowlBotY);
-    ctx.moveTo(r * 0.09, bowlBotY);
-    ctx.bezierCurveTo(r * 0.09, bowlBotY, bW, tY + (bowlBotY - tY) * 0.55, bW * 0.82, tY);
-    ctx.moveTo(-bW * 0.82, tY); ctx.lineTo(bW * 0.82, tY);
-    ctx.stroke();
+    const tY=-r*0.50, bowlBotY=r*0.14, stemBotY=r*0.64, baseY=r*0.76, baseW=r*0.62;
+    groundShadow(baseY+r*0.05, baseW);
+    // Bowl fill path
+    const bowlPath5 = () => {
+      ctx.beginPath();
+      ctx.moveTo(-bW*0.82,tY);
+      ctx.bezierCurveTo(-bW,tY+(bowlBotY-tY)*0.55,-r*0.09,bowlBotY,-r*0.09,bowlBotY);
+      ctx.lineTo(r*0.09,bowlBotY);
+      ctx.bezierCurveTo(r*0.09,bowlBotY,bW,tY+(bowlBotY-tY)*0.55,bW*0.82,tY);
+      ctx.closePath();
+    };
+    const g5=ctx.createLinearGradient(0,tY,0,bowlBotY);
+    g5.addColorStop(0,'#CC2020'); g5.addColorStop(0.7,'#8B0000'); g5.addColorStop(1,'#500000');
+    ctx.fillStyle=g5; bowlPath5(); ctx.fill();
+    ctx.save(); bowlPath5(); ctx.clip(); cylShade(bW,tY,bowlBotY); ctx.restore();
+    // Liquid surface in bowl (visible top of wine)
+    liquidSurface(0, tY+r*0.08, bW*0.76, bW*0.24, '#8B0000');
+    // Rim highlight line
+    ctx.strokeStyle='rgba(220,80,80,0.55)'; ctx.lineWidth=r*0.05;
+    ctx.beginPath(); ctx.moveTo(-bW*0.82,tY); ctx.lineTo(bW*0.82,tY); ctx.stroke();
+    // Bowl border 2px
+    ctx.strokeStyle='#3A0000'; ctx.lineWidth=2; bowlPath5(); ctx.stroke();
     // Stem
-    ctx.strokeStyle = '#8B0000'; ctx.lineWidth = r * 0.09;
-    ctx.beginPath(); ctx.moveTo(0, bowlBotY); ctx.lineTo(0, stemBotY); ctx.stroke();
+    ctx.strokeStyle='#6B0000'; ctx.lineWidth=r*0.09;
+    ctx.beginPath(); ctx.moveTo(0,bowlBotY); ctx.lineTo(0,stemBotY); ctx.stroke();
     // Base
-    const bg5 = ctx.createLinearGradient(-baseW, baseY, baseW, baseY);
-    bg5.addColorStop(0, '#5A0000'); bg5.addColorStop(0.5, '#8B0000'); bg5.addColorStop(1, '#5A0000');
-    ctx.fillStyle = bg5; ctx.strokeStyle = '#5A0000'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.ellipse(0, baseY, baseW, r * 0.085, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    // Highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.20)';
-    ctx.beginPath();
-    ctx.ellipse(-bW * 0.48, tY + (bowlBotY - tY) * 0.28, bW * 0.22, (bowlBotY - tY) * 0.22, -0.5, 0, Math.PI * 2);
-    ctx.fill();
+    const bg5=ctx.createLinearGradient(-baseW,baseY,baseW,baseY);
+    bg5.addColorStop(0,'#3A0000'); bg5.addColorStop(0.5,'#8B0000'); bg5.addColorStop(1,'#3A0000');
+    ctx.fillStyle=bg5; ctx.strokeStyle='#3A0000'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.ellipse(0,baseY,baseW,r*0.085,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    // Specular
+    ctx.fillStyle='rgba(255,255,255,0.46)';
+    ctx.beginPath(); ctx.ellipse(-bW*0.52,tY+(bowlBotY-tY)*0.24,bW*0.26,(bowlBotY-tY)*0.22,-0.5,0,Math.PI*2); ctx.fill();
     break;
   }
 
   /* ── 6: 🥂 Champagne flute ── gold, tall narrow, rising bubbles ── */
   case 6: {
-    const fTW = r * 0.36, fBW = r * 0.18;
-    const tY = -r * 0.50, bowlBotY = r * 0.22, stemBotY = r * 0.56, baseY = r * 0.68, baseW = r * 0.50;
-    // Flute fill
-    const g6 = ctx.createLinearGradient(-fTW, tY, fTW, bowlBotY);
-    g6.addColorStop(0, '#FFE566'); g6.addColorStop(0.5, '#FFD700'); g6.addColorStop(1, '#CC9900');
-    ctx.fillStyle = g6;
-    ctx.beginPath();
-    ctx.moveTo(-fBW, bowlBotY);
-    ctx.bezierCurveTo(-fBW - (fTW - fBW) * 0.5, tY + (bowlBotY - tY) * 0.55, -fTW, tY + (bowlBotY - tY) * 0.18, -fTW, tY);
-    ctx.lineTo(fTW, tY);
-    ctx.bezierCurveTo(fTW, tY + (bowlBotY - tY) * 0.18, fBW + (fTW - fBW) * 0.5, tY + (bowlBotY - tY) * 0.55, fBW, bowlBotY);
-    ctx.closePath(); ctx.fill();
+    const fTW=r*0.36, fBW=r*0.18;
+    const tY=-r*0.50, bowlBotY=r*0.22, stemBotY=r*0.56, baseY=r*0.68, baseW=r*0.50;
+    groundShadow(baseY+r*0.05, baseW);
+    // Flute bowl path
+    const flutePath6 = () => {
+      ctx.beginPath();
+      ctx.moveTo(-fBW,bowlBotY);
+      ctx.bezierCurveTo(-fBW-(fTW-fBW)*0.5,tY+(bowlBotY-tY)*0.55,-fTW,tY+(bowlBotY-tY)*0.18,-fTW,tY);
+      ctx.lineTo(fTW,tY);
+      ctx.bezierCurveTo(fTW,tY+(bowlBotY-tY)*0.18,fBW+(fTW-fBW)*0.5,tY+(bowlBotY-tY)*0.55,fBW,bowlBotY);
+      ctx.closePath();
+    };
+    const g6=ctx.createLinearGradient(0,tY,0,bowlBotY);
+    g6.addColorStop(0,'#FFE566'); g6.addColorStop(1,'#AA7700');
+    ctx.fillStyle=g6; flutePath6(); ctx.fill();
+    ctx.save(); flutePath6(); ctx.clip(); cylShade(fTW,tY,bowlBotY); ctx.restore();
+    // Liquid surface oval at rim
+    liquidSurface(0, tY+r*0.07, fTW*0.84, fTW*0.28, '#D4AF37');
     // Rim bar
-    ctx.fillStyle = '#AA8800';
-    ctx.beginPath(); ctx.roundRect(-fTW - 2, tY - r * 0.06, (fTW + 2) * 2, r * 0.11, 2); ctx.fill();
-    // Bubbles
-    ctx.fillStyle = 'rgba(255,255,170,0.72)';
-    [[0, 0.80], [-fBW * 0.5, 0.58], [fBW * 0.4, 0.38], [-fBW * 0.2, 0.18], [fBW * 0.1, 0.04]].forEach(([bx, bt]) => {
-      ctx.beginPath(); ctx.arc(bx * 2.2, tY + (bowlBotY - tY) * bt, r * 0.04, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle='#AA8800'; ctx.beginPath(); ctx.roundRect(-fTW-2,tY-r*0.06,(fTW+2)*2,r*0.11,2); ctx.fill();
+    // Bubbles rising
+    ctx.fillStyle='rgba(255,255,160,0.78)';
+    [[0,0.82],[-fBW*0.5,0.60],[fBW*0.4,0.40],[-fBW*0.2,0.20],[fBW*0.1,0.06]].forEach(([bx,bt])=>{
+      ctx.beginPath(); ctx.arc(bx*2.2,tY+(bowlBotY-tY)*bt,r*0.04,0,Math.PI*2); ctx.fill();
     });
-    // Flute border
-    ctx.strokeStyle = '#AA8800'; ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(-fBW, bowlBotY);
-    ctx.bezierCurveTo(-fBW - (fTW - fBW) * 0.5, tY + (bowlBotY - tY) * 0.55, -fTW, tY + (bowlBotY - tY) * 0.18, -fTW, tY);
-    ctx.lineTo(fTW, tY);
-    ctx.bezierCurveTo(fTW, tY + (bowlBotY - tY) * 0.18, fBW + (fTW - fBW) * 0.5, tY + (bowlBotY - tY) * 0.55, fBW, bowlBotY);
-    ctx.closePath(); ctx.stroke();
+    // Flute border 2px
+    ctx.strokeStyle='#7A6000'; ctx.lineWidth=2; flutePath6(); ctx.stroke();
     // Stem
-    ctx.strokeStyle = '#BB9900'; ctx.lineWidth = r * 0.07;
-    ctx.beginPath(); ctx.moveTo(0, bowlBotY); ctx.lineTo(0, stemBotY); ctx.stroke();
+    ctx.strokeStyle='#AA8800'; ctx.lineWidth=r*0.07;
+    ctx.beginPath(); ctx.moveTo(0,bowlBotY); ctx.lineTo(0,stemBotY); ctx.stroke();
     // Base
-    const bg6 = ctx.createLinearGradient(-baseW, baseY, baseW, baseY);
-    bg6.addColorStop(0, '#AA8800'); bg6.addColorStop(0.5, '#FFD700'); bg6.addColorStop(1, '#AA8800');
-    ctx.fillStyle = bg6; ctx.strokeStyle = '#AA8800'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.ellipse(0, baseY, baseW, r * 0.08, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    // Highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.32)';
-    ctx.beginPath();
-    ctx.ellipse(-fTW * 0.58, tY + (bowlBotY - tY) * 0.22, fTW * 0.22, (bowlBotY - tY) * 0.20, -0.3, 0, Math.PI * 2);
-    ctx.fill();
+    const bg6=ctx.createLinearGradient(-baseW,baseY,baseW,baseY);
+    bg6.addColorStop(0,'#886600'); bg6.addColorStop(0.5,'#FFD700'); bg6.addColorStop(1,'#886600');
+    ctx.fillStyle=bg6; ctx.strokeStyle='#7A6000'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.ellipse(0,baseY,baseW,r*0.08,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    // Specular
+    ctx.fillStyle='rgba(255,255,255,0.48)';
+    ctx.beginPath(); ctx.ellipse(-fTW*0.62,tY+(bowlBotY-tY)*0.22,fTW*0.24,(bowlBotY-tY)*0.20,-0.3,0,Math.PI*2); ctx.fill();
     break;
   }
 
   /* ── 7: 🍾 Champagne bottle ── green, gold foil, label ── */
   case 7: {
-    const bW = r * 0.62, nW = r * 0.24;
-    const tY = -r * 0.58, foilTopY = tY + r * 0.22, shoulderY = tY + r * 0.42, bodyTopY = tY + r * 0.48, bY = r * 0.56;
-    // Body
-    const g7 = ctx.createLinearGradient(-bW, 0, bW, 0);
-    g7.addColorStop(0, '#1A5C38'); g7.addColorStop(0.28, '#2E8B57'); g7.addColorStop(0.62, '#3AB568'); g7.addColorStop(1, '#1A5C38');
-    ctx.fillStyle = g7;
-    ctx.beginPath();
-    ctx.moveTo(-nW, shoulderY);
-    ctx.bezierCurveTo(-nW - (bW - nW) * 0.6, shoulderY + r * 0.18, -bW, bodyTopY + r * 0.06, -bW, bodyTopY + r * 0.14);
-    ctx.lineTo(-bW, bY - r * 0.10);
-    ctx.quadraticCurveTo(-bW, bY, -bW + r * 0.12, bY);
-    ctx.lineTo(bW - r * 0.12, bY);
-    ctx.quadraticCurveTo(bW, bY, bW, bY - r * 0.10);
-    ctx.lineTo(bW, bodyTopY + r * 0.14);
-    ctx.bezierCurveTo(bW, bodyTopY + r * 0.06, nW + (bW - nW) * 0.6, shoulderY + r * 0.18, nW, shoulderY);
-    ctx.closePath(); ctx.fill();
-    // Neck
-    const ntg = ctx.createLinearGradient(-nW, 0, nW, 0);
-    ntg.addColorStop(0, '#1A5C38'); ntg.addColorStop(0.4, '#2E8B57'); ntg.addColorStop(1, '#1A5C38');
-    ctx.fillStyle = ntg;
-    ctx.fillRect(-nW, foilTopY, nW * 2, shoulderY - foilTopY + 2);
-    // Gold foil section
-    const flg = ctx.createLinearGradient(-nW, foilTopY, nW, shoulderY);
-    flg.addColorStop(0, '#FFE066'); flg.addColorStop(0.5, '#FFD700'); flg.addColorStop(1, '#CC9900');
-    ctx.fillStyle = flg;
-    ctx.fillRect(-nW * 0.88, foilTopY, nW * 1.76, shoulderY - foilTopY + 3);
-    // Cork/mushroom cap
-    const cg7 = ctx.createRadialGradient(-nW * 0.2, tY + r * 0.06, 0, 0, tY + r * 0.12, nW * 1.1);
-    cg7.addColorStop(0, '#FFE566'); cg7.addColorStop(1, '#CC9900');
-    ctx.fillStyle = cg7;
-    ctx.beginPath(); ctx.ellipse(0, tY + r * 0.12, nW * 0.90, r * 0.14, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#BB8800';
-    ctx.fillRect(-nW * 0.48, tY + r * 0.08, nW * 0.96, r * 0.11);
-    // Wire cage lines on foil
-    ctx.strokeStyle = 'rgba(150,110,0,0.55)'; ctx.lineWidth = 0.9;
-    for (let i = -1; i <= 1; i++) {
-      ctx.beginPath(); ctx.moveTo(i * nW * 0.42, foilTopY + 2); ctx.lineTo(i * nW * 0.82, shoulderY - 2); ctx.stroke();
-    }
+    const bW=r*0.62, nW=r*0.24;
+    const tY=-r*0.58, foilTopY=tY+r*0.22, shoulderY=tY+r*0.42, bodyTopY=tY+r*0.48, bY=r*0.56;
+    groundShadow(bY, bW + 2);
+    // Bottle body path
+    const bottlePath7 = () => {
+      ctx.beginPath();
+      ctx.moveTo(-nW,shoulderY);
+      ctx.bezierCurveTo(-nW-(bW-nW)*0.6,shoulderY+r*0.18,-bW,bodyTopY+r*0.06,-bW,bodyTopY+r*0.14);
+      ctx.lineTo(-bW,bY-r*0.10); ctx.quadraticCurveTo(-bW,bY,-bW+r*0.12,bY);
+      ctx.lineTo(bW-r*0.12,bY); ctx.quadraticCurveTo(bW,bY,bW,bY-r*0.10);
+      ctx.lineTo(bW,bodyTopY+r*0.14);
+      ctx.bezierCurveTo(bW,bodyTopY+r*0.06,nW+(bW-nW)*0.6,shoulderY+r*0.18,nW,shoulderY);
+      ctx.closePath();
+    };
+    const g7=ctx.createLinearGradient(0,shoulderY,0,bY);
+    g7.addColorStop(0,'#3AB568'); g7.addColorStop(1,'#1A5C38');
+    ctx.fillStyle=g7; bottlePath7(); ctx.fill();
+    ctx.save(); bottlePath7(); ctx.clip(); cylShade(bW,shoulderY,bY); ctx.restore();
+    // Neck fill
+    const nkPath7 = () => { ctx.beginPath(); ctx.roundRect(-nW,foilTopY,nW*2,shoulderY-foilTopY+2,[0,0,4,4]); };
+    const ntg7=ctx.createLinearGradient(-nW,0,nW,0);
+    ntg7.addColorStop(0,'#1A5C38'); ntg7.addColorStop(0.4,'#2E8B57'); ntg7.addColorStop(1,'#1A5C38');
+    ctx.fillStyle=ntg7; nkPath7(); ctx.fill();
+    ctx.save(); nkPath7(); ctx.clip(); cylShade(nW,foilTopY,shoulderY); ctx.restore();
+    // Gold foil
+    const flg7=ctx.createLinearGradient(-nW,foilTopY,nW,shoulderY);
+    flg7.addColorStop(0,'#FFE066'); flg7.addColorStop(0.5,'#FFD700'); flg7.addColorStop(1,'#CC9900');
+    ctx.fillStyle=flg7; ctx.fillRect(-nW*0.88,foilTopY,nW*1.76,shoulderY-foilTopY+3);
+    // Cork
+    const cg7=ctx.createRadialGradient(-nW*0.2,tY+r*0.06,0,0,tY+r*0.12,nW*1.1);
+    cg7.addColorStop(0,'#FFE566'); cg7.addColorStop(1,'#CC9900');
+    ctx.fillStyle=cg7; ctx.beginPath(); ctx.ellipse(0,tY+r*0.12,nW*0.90,r*0.14,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#BB8800'; ctx.fillRect(-nW*0.48,tY+r*0.08,nW*0.96,r*0.11);
+    // Wire lines on foil
+    ctx.strokeStyle='rgba(150,110,0,0.55)'; ctx.lineWidth=0.9;
+    for (let i=-1;i<=1;i++) { ctx.beginPath(); ctx.moveTo(i*nW*0.42,foilTopY+2); ctx.lineTo(i*nW*0.82,shoulderY-2); ctx.stroke(); }
     // Label
-    const labY = tY + r * 0.58, labH = r * 0.30;
-    ctx.fillStyle = '#F0E8D0';
-    ctx.beginPath(); ctx.roundRect(-bW * 0.70, labY, bW * 1.40, labH, 4); ctx.fill();
-    ctx.fillStyle = '#8B6914';
-    ctx.font = `bold ${Math.max(7, Math.floor(r * 0.17))}px sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('CHAM', 0, labY + labH * 0.35);
-    ctx.font = `${Math.max(6, Math.floor(r * 0.13))}px sans-serif`;
-    ctx.fillText('PAGNE', 0, labY + labH * 0.70);
-    // Body border
-    ctx.strokeStyle = '#155030'; ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.moveTo(-nW, shoulderY);
-    ctx.bezierCurveTo(-nW - (bW - nW) * 0.6, shoulderY + r * 0.18, -bW, bodyTopY + r * 0.06, -bW, bodyTopY + r * 0.14);
-    ctx.lineTo(-bW, bY - r * 0.10);
-    ctx.quadraticCurveTo(-bW, bY, -bW + r * 0.12, bY);
-    ctx.lineTo(bW - r * 0.12, bY);
-    ctx.quadraticCurveTo(bW, bY, bW, bY - r * 0.10);
-    ctx.lineTo(bW, bodyTopY + r * 0.14);
-    ctx.bezierCurveTo(bW, bodyTopY + r * 0.06, nW + (bW - nW) * 0.6, shoulderY + r * 0.18, nW, shoulderY);
-    ctx.closePath(); ctx.stroke();
-    // Body highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.beginPath();
-    ctx.ellipse(-bW * 0.44, tY + r * 0.65, bW * 0.14, r * 0.22, -0.3, 0, Math.PI * 2);
-    ctx.fill();
+    const labY=tY+r*0.58, labH=r*0.30;
+    ctx.fillStyle='#F0E8D0'; ctx.beginPath(); ctx.roundRect(-bW*0.70,labY,bW*1.40,labH,4); ctx.fill();
+    ctx.fillStyle='#8B6914';
+    ctx.font=`bold ${Math.max(7,Math.floor(r*0.17))}px sans-serif`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('CHAM',0,labY+labH*0.35);
+    ctx.font=`${Math.max(6,Math.floor(r*0.13))}px sans-serif`;
+    ctx.fillText('PAGNE',0,labY+labH*0.70);
+    // Bottle border 2px
+    ctx.strokeStyle='#0E3A20'; ctx.lineWidth=2; bottlePath7(); ctx.stroke();
+    // Strong specular on bottle body (left-side bright strip)
+    ctx.fillStyle='rgba(255,255,255,0.32)';
+    ctx.beginPath(); ctx.ellipse(-bW*0.46,tY+r*0.65,bW*0.14,r*0.24,-0.3,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,0.18)';
+    ctx.beginPath(); ctx.ellipse(-bW*0.38,tY+r*0.90,bW*0.12,r*0.18,-0.3,0,Math.PI*2); ctx.fill();
     break;
   }
 
